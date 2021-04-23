@@ -4,20 +4,39 @@ layout (binding = 0, rgba32f) uniform image2D image0;
 layout (binding = 1, rgba32f) uniform image2D image1;
 
 uniform int currentBuffer;
+uniform bool pause;
+uniform vec2 mousePos;
 
-void calcColor(layout (rgba32f) image2D readImage,layout (rgba32f) image2D writeImage);
+void SetPixel();
+void CalcColor(layout (rgba32f) image2D readImage,layout (rgba32f) image2D writeImage);
 
 void main()
 {
-	if (currentBuffer == 0){
-		calcColor(image0, image1);
-	}
-	else if (currentBuffer == 1){
-		calcColor(image1, image0);
+	if (!pause){
+		if (currentBuffer == 0){
+			CalcColor(image0, image1);
+		}
+		else if (currentBuffer == 1){
+			CalcColor(image1, image0);
+		}
+	} else if (pause && (mousePos != vec2(-1.0, -1.0))){
+		SetPixel();
 	}
 }
 
-void calcColor(layout (rgba32f) image2D readImage, layout (rgba32f) image2D writeImage)
+void SetPixel()
+{
+	ivec2 mousePosi = ivec2(mousePos);
+	if (ivec2(gl_GlobalInvocationID.xy) == mousePosi){
+		imageStore(image0, mousePosi, vec4(0.0, 0.0, 0.0, 1.0));
+		imageStore(image1, mousePosi, vec4(0.0, 0.0, 0.0, 1.0));
+	}
+	//imageStore(image0, ivec2(gl_GlobalInvocationID.xy), vec4(mousePos/imageSize(image0), 0.0, 1.0));
+	//imageStore(image1, ivec2(gl_GlobalInvocationID.xy), vec4(mousePos/imageSize(image0), 0.0, 1.0));
+}
+
+
+void CalcColor(layout (rgba32f) image2D readImage, layout (rgba32f) image2D writeImage)
 {
 	ivec2 pixelCoords = ivec2(gl_GlobalInvocationID.xy);
 	ivec2 dims = imageSize(readImage);
@@ -82,6 +101,6 @@ void calcColor(layout (rgba32f) image2D readImage, layout (rgba32f) image2D writ
 	//if (alive)
 		//color = vec4(0.0, 0.0, 0.0, 1.0);
 	//color = imageLoad(writeImage, ivec2(pixelCoords.x, pixelCoords.y));
-
+	
 	imageStore(writeImage, pixelCoords, color);
 }

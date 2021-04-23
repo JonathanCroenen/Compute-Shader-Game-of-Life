@@ -18,15 +18,20 @@ double lastTime = 0.0;
 double timer = 0.0;
 int speed = 0;
 bool pause = false;
+bool drawing = false;
 
 double lastMouseX = 0.0;
 double lastMouseY = 0.0;
 float panX = 0.0f;
 float panY = 0.0f;
 
+glm::mat4 transform;
 glm::mat4 translation;
 float zoomLevel = 1.0f;
 glm::mat4 zoom;
+
+glm::vec4 mousePos;
+ComputeShader computeShader;
 
 GLFWwindow* Initialize(int width, int height, const char* title, int vsync);
 void SetupBuffers(GLuint& VAO);
@@ -37,6 +42,11 @@ void MouseMoveCallback(GLFWwindow* window, double xpos, double ypos);
 void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset);
 void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
 
+
+float clamp(float d, float min, float max) {
+	const float t = d < min ? min : d;
+	return t > max ? max : t;
+}
 void printMat4(const glm::mat4& m)
 {
 	std::cout << std::fixed << std::setprecision(2);
@@ -54,7 +64,7 @@ void main()
 	window = Initialize(WINDOW_WIDTH, WINDOW_HEIGHT, "RayTracer", 1);
 
 	Shader shader("C:/Users/jonat/source/repos/ComputeShaders/ComputeShaders/vertex.glsl", "C:/Users/jonat/source/repos/ComputeShaders/ComputeShaders/fragment.glsl");
-	ComputeShader computeShader("C:/Users/jonat/source/repos/ComputeShaders/ComputeShaders/compute.glsl");
+	computeShader = ComputeShader("C:/Users/jonat/source/repos/ComputeShaders/ComputeShaders/compute.glsl");
 
 	GLuint QuadVAO;
 	SetupBuffers(QuadVAO);
@@ -77,10 +87,20 @@ void main()
 		dTime =  currentTime - lastTime;
 		lastTime = currentTime;
 
+		transform = zoom * translation;
+		transform[0][0] = clamp(transform[0][0], 1.0f, 8.0f);
+		transform[1][1] = clamp(transform[1][1], 1.0f, 8.0f);
+		transform[3][0] = clamp(transform[3][0], -transform[0][0], transform[0][0]);
+		transform[3][1] = clamp(transform[3][1], -transform[0][0], transform[0][0]);
+
+		mousePos = glm::vec4(2.0f * lastMouseX / WINDOW_WIDTH - 1.0f, -2.0f * lastMouseY / WINDOW_HEIGHT + 1.0f, 0.0f, 1.0f);
+		mousePos = glm::inverse(transform) * mousePos;
+
 		timer += dTime ;
-		if (timer >= speed * 0.0133333 && !pause) {
+		if (timer >= speed * 0.0133333) {
 			computeShader.use();
 			computeShader.setInt("currentBuffer", currentBuffer);
+			computeShader.setInt("pause", pause);
 			currentBuffer = !currentBuffer;
 			computeShader.dispatch(texWidth, texHeight, 1);
 			timer = 0.0f;
@@ -90,19 +110,12 @@ void main()
 			glClear(GL_COLOR_BUFFER_BIT);
 
 			shader.use();
-			shader.setMat4("translation", translation);
-			shader.setMat4("zoom", zoom);
-
-			//glm::mat4 invZoom = glm::scale(glm::mat4(1.0f), glm::vec3(1.0f/zoomLevel, 1.0f/zoomLevel, 1.0f));
-			glm::mat4 invTranslation = glm::translate(glm::mat4(1.0f), glm::vec3(-panX*WINDOW_WIDTH/2.0f, panY*WINDOW_HEIGHT/2.0f, 0.0f));
-
-			glm::vec4 mousePos = glm::vec4(float(lastMouseX), float(lastMouseY), 1.0f, 1.0f);
-			mousePos = invTranslation * mousePos;
-			//std::cout << mousePos.x << " " << mousePos.y << std::endl;
+			shader.setMat4("transform", transform);
+			shader.setInt("state", pause + drawing);
 
 			glBindVertexArray(QuadVAO);
 			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, currentBuffer ? texture0 : texture1);
+			glBindTexture(GL_TEXTURE_2D, (currentBuffer && !pause) ? texture0 : texture1);
 			glDrawArrays(GL_TRIANGLES, 0, 6);
 
 			glfwPollEvents();
@@ -111,11 +124,6 @@ void main()
 	}
 
 	glfwTerminate();
-}
-
-float clamp(float d, float min, float max) {
-	const float t = d < min ? min : d;
-	return t > max ? max : t;
 }
 
 GLFWwindow* Initialize(int width, int height, const char* title, int vsync)
@@ -187,23 +195,24 @@ void SetupTexture(GLuint width, GLuint height, GLuint& texture0, GLuint& texture
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-	float* data = new float[4*width*height];
-	for (int i = 0; i < height; i++) {
-		for (int j = 0; j < width; j++) {
-			if (float(rand() % 100) / 100.0f < 0.60f) {
-				data[4*(j + i * width)] = 0.0f;
-				data[4 * (j + i * width) + 1] = 0.0f;
-				data[4 * (j + i * width) + 2] = 0.0f;
-				data[4 * (j + i * width) + 3] = 1.0f;
-			}
-			else {
-				data[4 * (j + i * width)] = 1.0f;
-				data[4 * (j + i * width) + 1] = 1.0f;
-				data[4 * (j + i * width) + 2] = 1.0f;
-				data[4 * (j + i * width) + 3] = 1.0f;
-			}
-		}
-	}
+	float* data = new float[4 * width * height];
+	//for (int i = 0; i < height; i++) {
+	//	for (int j = 0; j < width; j++) {
+	//		if (float(rand() % 100) / 100.0f < 0.60f) {
+	//			data[4*(j + i * width)] = 0.0f;
+	//			data[4 * (j + i * width) + 1] = 0.0f;
+	//			data[4 * (j + i * width) + 2] = 0.0f;
+	//			data[4 * (j + i * width) + 3] = 1.0f;
+	//		}
+	//		else {
+	//			data[4 * (j + i * width)] = 1.0f;
+	//			data[4 * (j + i * width) + 1] = 1.0f;
+	//			data[4 * (j + i * width) + 2] = 1.0f;
+	//			data[4 * (j + i * width) + 3] = 1.0f;
+	//		}
+	//	}
+	//}
+	memset(data, 0.0f, 4 * width * height);
 
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width, height, 0, GL_RGBA, GL_FLOAT, data);
 
@@ -252,7 +261,25 @@ void KeyBoardCallback(GLFWwindow* window, int key, int scancode, int action, int
 		glfwSetWindowShouldClose(window, true);
 	}
 	if (key == GLFW_KEY_SPACE && action == GLFW_PRESS) {
-		pause = !pause;
+		if (pause && drawing) {
+			drawing = !drawing;
+		}
+		else {
+			pause = !pause;
+		}
+	}
+	if (key == GLFW_KEY_D && action == GLFW_PRESS) {
+		if (pause && !drawing) {
+			drawing = !drawing;
+		}
+		else if (pause && drawing) {
+			pause = !pause;
+			drawing = !drawing;
+		}
+		else {
+			pause = !pause;
+			drawing = !drawing;
+		}
 	}
 	if (key == GLFW_KEY_LEFT && action == GLFW_PRESS) {
 		speed++;
@@ -266,19 +293,27 @@ void KeyBoardCallback(GLFWwindow* window, int key, int scancode, int action, int
 
 void MouseMoveCallback(GLFWwindow* window, double xpos, double ypos)
 {
-	double offsetx = xpos - lastMouseX;
-	double offsety = ypos - lastMouseY;
+	float offsetx = xpos - lastMouseX;
+	float offsety = ypos - lastMouseY;
 	lastMouseX = xpos;
 	lastMouseY = ypos;
 
 	if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
-		panX += 2 * offsetx / (WINDOW_WIDTH * zoomLevel);
-		panY += -2 * offsety / (WINDOW_HEIGHT * zoomLevel);
+		if (!drawing) {
+			panX += 2 * offsetx / (WINDOW_WIDTH * zoomLevel);
+			panY += -2 * offsety / (WINDOW_HEIGHT * zoomLevel);
 
-		panX = clamp(panX, -1.0f, 1.0f);
-		panY = clamp(panY, -1.0f, 1.0f);
+			panX = clamp(panX, -1.0f, 1.0f);
+			panY = clamp(panY, -1.0f, 1.0f);
 
-		translation = glm::translate(glm::mat4(1.0f), glm::vec3(panX, panY, 0.0f));
+			translation = glm::translate(glm::mat4(1.0f), glm::vec3(panX, panY, 0.0f));
+			computeShader.use();
+			computeShader.setVec2("mousePos", -1.0f, -1.0f);
+		}
+		else if (drawing) {
+			computeShader.use();
+			computeShader.setVec2("mousePos", WINDOW_WIDTH * (mousePos.x + 1.0f) / 2.0f, WINDOW_HEIGHT * (mousePos.y + 1.0f) / 2.0f);
+		}
 	}
 }
 
@@ -286,11 +321,11 @@ void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset)
 {	
 	zoomLevel += yoffset * zoomLevel / 10.0f;
 
-	float xdelta = 2.0f * lastMouseX / WINDOW_WIDTH - 1.0f;
-	float ydelta = -2.0f * lastMouseY / WINDOW_HEIGHT + 1.0f;
+	float deltax = 2.0f * lastMouseX / WINDOW_WIDTH - 1.0f;
+	float deltay = -2.0f * lastMouseY / WINDOW_HEIGHT + 1.0f;
 
-	glm::mat4 moveTo = glm::translate(glm::mat4(1.0f), glm::vec3(-xdelta, -ydelta, 0.0f));
-	glm::mat4 moveBack = glm::translate(glm::mat4(1.0f), glm::vec3(xdelta, ydelta, 0.0f));
+	glm::mat4 moveTo = glm::translate(glm::mat4(1.0f), glm::vec3(-deltax, -deltay, 0.0f));
+	glm::mat4 moveBack = glm::translate(glm::mat4(1.0f), glm::vec3(deltax, deltay, 0.0f));
 
 	if (zoomLevel > 8.0f)
 	{
@@ -299,24 +334,14 @@ void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset)
 		glm::mat4 moveBack = glm::mat4(1.0f);
 	}
 
-	if (zoomLevel < 0.4f)
+	if (zoomLevel < 1.0f)
 	{
-		zoomLevel = 0.4f;
+		zoomLevel = 1.0f;
 		glm::mat4 moveTo = glm::mat4(1.0f);
 		glm::mat4 moveBack = glm::mat4(1.0f);
 	}
 
 	zoom = glm::scale(glm::mat4(1.0f), glm::vec3(zoomLevel, zoomLevel, 1.0f));
-	zoom = moveBack * zoom * moveTo;
-	/*panX += yoffset * xdelta / (5.0f * zoomLevel);
-	panY += -yoffset * xdelta / (5.0f * zoomLevel);
-
-	if (panX > 1.0f) panX = 1.0f;
-	if (panX > 1.0f) panX = 1.0f;
-	if (panY < -1.0f) panY = -1.0f;
-	if (panY < -1.0f) panY = -1.0f;
-
-	translation = glm::translate(glm::mat4(1.0f), glm::vec3(panX, panY, 0.0f));*/
 }
 
 void FramebufferSizeCallback(GLFWwindow* window, int width, int height)
